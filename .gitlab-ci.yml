@@ -1,0 +1,11 @@
+# Gitlab ci/cd file configuration 
+image: sebastienviardot/pcsefriscv:20220709
+pages:
+    script:
+        - make kernel.bin
+        - ./jobtest_student.sh
+    artifacts:
+        paths:
+            - public
+
+
