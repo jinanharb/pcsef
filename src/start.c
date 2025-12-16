@@ -4,45 +4,6 @@
 #include "processus.h"
 #include "timer.h"
 
-// Fonctions de test des processus
-void idle(void) 
-{
-    for (;;) 
-    {
-        printf("[%s] pid = %i\n", mon_nom(), mon_pid());
-        enable_it();
-        hlt();
-        disable_it();
-    }
-}
-
-void proc1(void) {
-    for (;;) {
-        printf("[%s] pid = %i\n", mon_nom(), mon_pid());
-        enable_it();
-        hlt();
-        disable_it();
-    }
-}
-
-void proc2(void) {
-    for (;;) {
-        printf("[%s] pid = %i\n", mon_nom(), mon_pid());
-        enable_it();
-        hlt();
-        disable_it();
-    }
-}
-
-void proc3(void) {
-    for (;;) {
-        printf("[%s] pid = %i\n", mon_nom(), mon_pid());
-        enable_it();
-        hlt();
-        disable_it();
-    }
-}
-
 
 void kernel_start(void) {
 
