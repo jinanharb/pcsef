@@ -46,27 +46,23 @@ void trap_handler(uint64_t mcause, uint64_t mie, uint64_t mip)
 {
     uint64_t val;
     char s[9];
-    
-    // Unused parameters
+
     (void)mie;
     (void)mip;
     
-    //verifying that the interrupt was a timer interrupt
     if ((mcause & 0x7FFFFFFFFFFFFFFF) == 7) 
     {
-        //counting the ticks to convert them into seconds
         nb_ticks++;
         val = *CLINT_TIMER;
         val = val + (TIMER_FREQ / IT_FREQ);
         *CLINT_TIMER_CMP = val;
         
-        // Calculate seconds
         seconds = nbr_secondes();
         sprintf(s, "%02u:%02u:%02u", (seconds / 3600), ((seconds % 3600) / 60), (seconds % 60));
         affiche_time(s);
         
         // Call the scheduler
-        ordonnance();
+        //ordonnance();
     }
 }
 
