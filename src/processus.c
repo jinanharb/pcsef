@@ -1,146 +1,182 @@
 #include "processus.h"
-#include <string.h>
 #include <stdio.h>
+#include <cpu.h>
+#include "timer.h"
 
-static processus_t table_proc[NBPROC];
-static processus_t *actif = NULL;
-static int32_t prochain_pid = 0;
+process_t process_table[MAX_PROCESSES];
+int32_t pid_actif = -1;
+process_t *courant = NULL;
+int32_t proc_count = 0;
 
-
-static void proc_launcher(void (*proc)(void)) 
+void proc_launcher(void (*proc)(void))
 {
     proc();
     fin_processus();
 }
 
-void init_proc(void) 
+static void setup_initial_context(process_t *p, void (*f)(void))
 {
-    for (int i = 0; i < NBPROC; i++) 
-    {
-        table_proc[i].pid = -1;
-        table_proc[i].etat = MORT;
-    }
-    
-    table_proc[0].pid = 0;
-    strncpy(table_proc[0].nom, "idle", NOM_PROC_MAX);
-    table_proc[0].etat = ELU;
-    table_proc[0].reveil = 0;
-    
-    actif = &table_proc[0];
-    prochain_pid = 1;
+    p->context.regs[0] = (uint64_t)proc_launcher;
+    p->context.regs[1] = (uint64_t)(p->stack + PROCESS_STACK_SIZE);
+    p->context.regs[17] = (uint64_t)f;
+    p->context.regs[16] = (uint64_t)proc_launcher;
 }
 
-int32_t cree_processus(void (*code)(void), char *nom) 
+void init_proc(void)
 {
-    int i;
-    for (i = 0; i < NBPROC; i++) 
-    {
-        if (table_proc[i].etat == MORT) 
+    pid_actif = -1;
+    courant = NULL;
+    proc_count = 0;
+
+    process_t *idle_p = &process_table[0];
+    idle_p->pid = 0;
+    strncpy(idle_p->name, "idle", PROCESS_NAME_LEN);
+    idle_p->state = ELU;
+    idle_p->wakeup_time = 0;
+
+    courant = idle_p;
+    pid_actif = 0;
+    proc_count = 1;
+}
+
+int32_t cree_processus(void (*f)(void), const char *name)
+{
+    process_t *pnew = NULL;
+    int32_t pid_new = -1;
+
+    for (int k = 1; k < MAX_PROCESSES; k++) {
+        if (k < proc_count) {
+            if (process_table[k].state == MORT) {
+                pnew = &process_table[k];
+                pid_new = k;
+                break;
+            }
+        } else if (k == proc_count) {
+            pnew = &process_table[k];
+            pid_new = k;
+            break;
+        }
+    }
+
+    if (!pnew) {
+        printf("Table pleine (MAX=%d)\n", MAX_PROCESSES);
+        return -1;
+    }
+
+    if (pid_new == proc_count)
+        proc_count++;
+
+    pnew->pid = pid_new;
+    strncpy(pnew->name, name, PROCESS_NAME_LEN - 1);
+    pnew->name[PROCESS_NAME_LEN - 1] = '\0';
+    pnew->state = ACTIVABLE;
+    pnew->wakeup_time = 0;
+
+    setup_initial_context(pnew, f);
+
+    return pnew->pid;
+}
+
+void ordonnance(void)
+{
+    int32_t prev_pid = pid_actif;
+    process_t *prev = courant;
+    uint32_t now = nbr_secondes();
+
+    for (int k = 0; k < proc_count; k++) {
+        if (process_table[k].state == ENDORMI &&
+            process_table[k].wakeup_time <= now)
+        {
+            process_table[k].state = ACTIVABLE;
+        }
+    }
+
+    int32_t suiv = prev_pid;
+
+    for (;;) {
+        suiv = (suiv + 1) % proc_count;
+        if (process_table[suiv].state == ACTIVABLE ||
+            process_table[suiv].state == ELU)
         {
             break;
         }
     }
-    
-    /*if (i == NBPROC) 
-    {
-        return -1; // Plus de place
-    }*/
-    
-    table_proc[i].pid = prochain_pid++;
-    strncpy(table_proc[i].nom, nom, NOM_PROC_MAX - 1);
-    table_proc[i].nom[NOM_PROC_MAX - 1] = '\0';
-    table_proc[i].etat = ACTIVABLE;
-    table_proc[i].reveil = 0;
-    
-    table_proc[i].registres[1] = (uint64_t)&table_proc[i].pile[STACK_SIZE];
 
-    table_proc[i].registres[0] = (uint64_t)proc_launcher;
+    if (prev->state == ELU)
+        prev->state = ACTIVABLE;
 
-    table_proc[i].registres[10] = (uint64_t)code;
-    
-    return table_proc[i].pid;
+    process_table[suiv].state = ELU;
+    courant = &process_table[suiv];
+    pid_actif = suiv;
+
+    ctx_sw(prev->context.regs, courant->context.regs);
 }
 
-void ordonnance(void) 
+void fin_processus(void)
 {
-    processus_t *ancien = actif;
-    
-    uint32_t temps = nbr_secondes();
-    // the problem here is that NBPROC is fixe but it should be = to how much processes have been created
-    for (int i = 0; i < NBPROC; i++) 
-    {
-        if (table_proc[i].etat == ENDORMI && table_proc[i].reveil <= temps) 
-        {
-            table_proc[i].etat = ACTIVABLE;
-        }
+    if (courant->pid == 0) {
+        printf("ERREUR\n");
+        return;
     }
-    
-    int idx_actif = actif - table_proc;
-    int i = (idx_actif + 1) % NBPROC;
-    
-    while (i != idx_actif) {
-        if (table_proc[i].etat == ACTIVABLE || table_proc[i].etat == ELU) {
-            if (table_proc[i].pid != -1 && table_proc[i].etat != MORT) {
-                break;
-            }
-        }
-        i = (i + 1) % NBPROC;
-    }
-    
-    if (i == idx_actif) 
-    {
-        if (actif->etat == MORT) 
-        {
-            for (i = 0; i < NBPROC; i++) {
-                if (table_proc[i].etat != MORT && table_proc[i].pid != -1) {
-                    break;
-                }
-            }
-            if (i == NBPROC) {
-                i = 0; 
-            }
-        } else 
-        {
-            return;
-        }
-    }
-    
-    if (ancien->etat == ELU) 
-    {
-        ancien->etat = ACTIVABLE;
-    }
-    
-    actif = &table_proc[i];
-    if (actif->etat == ACTIVABLE) {
-        actif->etat = ELU;
-    }
-    
-    if (ancien != actif) 
-    {
-        ctx_sw(ancien->registres, actif->registres);
-    }
-}
 
-int32_t mon_pid(void) 
-{
-    return actif->pid;
-}
-
-char *mon_nom(void) 
-{
-    return actif->nom;
-}
-
-void dors(uint32_t nbr_secs) 
-{
-    actif->etat = ENDORMI;
-    actif->reveil = nbr_secondes() + nbr_secs;
+    courant->state = MORT;
     ordonnance();
 }
 
-void fin_processus(void) 
+void dors(uint64_t sec)
 {
-    actif->etat = MORT;
-    actif->pid = -1;
+    if (courant->pid == 0)
+        return;
+
+    courant->state = ENDORMI;
+    courant->wakeup_time = nbr_secondes() + sec;
+
     ordonnance();
+}
+
+int64_t mon_pid(void)
+{
+    return courant ? courant->pid : -1;
+}
+
+char *mon_nom(void)
+{
+    return courant ? courant->name : "N/A";
+}
+
+void idle()
+{
+    for (;;) {
+        enable_it();
+        hlt();
+        disable_it();
+    }
+}
+
+void proc1(void)
+{
+    for (int i = 0; i < 4; i++) {
+        printf("[t = %u] processus %s pid = %i\n",
+               nbr_secondes(), mon_nom(), mon_pid());
+        dors(2);
+    }
+}
+
+void proc2(void)
+{
+    for (int i = 0; i < 2; i++) {
+        printf("[t = %u] processus %s pid = %i\n",
+               nbr_secondes(), mon_nom(), mon_pid());
+        cree_processus(proc1, "NEW_CHILD");
+        dors(3);
+    }
+}
+
+void proc3(void)
+{
+    for (int i = 0; i < 3; i++) {
+        printf("[t = %u] processus %s pid = %i\n",
+               nbr_secondes(), mon_nom(), mon_pid());
+        dors(5);
+    }
 }
